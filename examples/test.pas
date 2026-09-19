@@ -1,20 +1,4 @@
 program Test;
-{$ifdef fpc}
- {$mode delphi}
-{$endif}
-{$ifdef Win32}
- {$define Windows}
-{$endif}
-{$ifdef Win64}
- {$define Windows}
-{$endif}
-{$ifdef WinCE}
- {$define Windows}
-{$endif}
-{$ifdef Windows}
- {$apptype console}
-{$endif}
-{$r+,s+}
 
 procedure x;
  procedure y;

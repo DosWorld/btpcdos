@@ -1,2 +1,2 @@
 @echo off
-btpc < test.pas > test.exe
+btpc test.pas -o test.exe
