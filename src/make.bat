@@ -18,21 +18,32 @@ rem               into btpc.pas, between the markers it finds there, and sets
 rem               HXBaseSize to its length. A change to a tool alone does not
 rem               need the compiler rebuilt; a change to hxrtl.asm or to
 rem               btpc.pas itself does.
-rem   BTCPC.EXE   the compiler. It is built twice: once by the compiler kept
-rem               in ..\boot, and once by what that first build produced. The
-rem               two images are then compared, and the build is good only if
-rem               they are the same bytes - the source is the same, so a
-rem               difference means the code generation depended on which
-rem               compiler ran and not on the source. The compiler left behind
-rem               here is the verified one; it replaces the one in ..\boot once
-rem               the samples have been run (see README).
+rem   BTCPC.EXE   the compiler. It is built again and again, each image by the
+rem               one before it, until two of those images are the same bytes.
+rem               The source is the same for all of them, so a difference
+rem               between two of them means the code generation depended on
+rem               which compiler ran and not on the source. The last image is
+rem               the verified one; it replaces the one in ..\boot once the
+rem               samples have been run (see README).
 rem
-rem The compiler names its output after the source, so btpc.pas would be built
-rem into btpc.EXE. Both images are therefore written through the redirect,
-rem under names this batch gives them, and the new compiler is built beside
-rem the old one and moved over it only once it has been compared. That also
-rem keeps the names the same whatever case the source file is spelled in,
-rem which matters where a name is looked up in the host's own filesystem.
+rem Why two images are not always enough, and the third is built only when
+rem they are not. A compiler does not read the base out of its source - it
+rem writes the base it carries, the one it was built with, from its own
+rem EmitStubCode. So the first image a seed with an older base produces
+rem carries that older base and nothing in the source can change that. It is
+rem a compiler in every other way: it runs, and what it writes carries the
+rem base from the source, because its own EmitStubCode is the one the source
+rem has. So a change to hxrtl.bin makes exactly the first pair of images
+rem differ, and the image after that pair is the settled one. Without such a
+rem change the first two images are already equal and the third is not built.
+rem
+rem The compiler names its image after the source, so compiling btpc.pas would
+rem write btpc.EXE and the generation after it would write over it. Each image
+rem is therefore named on the command line with -o, which is also what leaves
+rem the two compilations differing in nothing but which compiler ran them: the
+rem source is the same file under the same name both times. The verified image
+rem is moved over the old compiler only once it has been compared, so a build
+rem that fails leaves the compiler that was there.
 rem
 rem egasm is a Windows program: under DOS it stops with "This program must be
 rem run under Win32" and writes nothing. The blob is a product of hxrtl.asm and
@@ -83,31 +94,51 @@ if not exist hxbase.bin goto failed
 if not exist btpc.pas goto failed
 
 echo === the chain ===
-del gen3.exe
-..\boot\BTCPC.EXE < btpc.pas > gen3.exe
-if not exist gen3.exe goto failed
-find "MZ" < gen3.exe > nul
-if errorlevel 1 goto failed
 if exist btpc.new del btpc.new
-gen3.exe < btpc.pas > btpc.new
-if not exist btpc.new goto failed
-find "MZ" < btpc.new > nul
-if errorlevel 1 goto failed
+if exist gen1.exe del gen1.exe
+..\boot\BTCPC.EXE -o gen1.exe btpc.pas
+if not exist gen1.exe goto failed
+if exist gen2.exe del gen2.exe
+gen1.exe -o gen2.exe btpc.pas
+if not exist gen2.exe goto failed
 
 echo === the fixpoint ===
-del fix.txt
-fc /b gen3.exe btpc.new > fix.txt
+if exist fix.txt del fix.txt
+fc /b gen1.exe gen2.exe > fix.txt
+if not errorlevel 1 goto settled2
+
+echo THE FIRST TWO IMAGES ARE NOT THE SAME BYTES - the seed carries an older
+echo base than the source does, which is what a change to hxrtl.asm does. The
+echo next image is built by a compiler whose own base is the current one.
+if exist gen3.exe del gen3.exe
+gen2.exe -o gen3.exe btpc.pas
+if not exist gen3.exe goto failed
+if exist fix.txt del fix.txt
+fc /b gen2.exe gen3.exe > fix.txt
 if errorlevel 1 goto notfixed
+if exist gen1.exe del gen1.exe
+if exist gen2.exe del gen2.exe
+ren gen3.exe btpc.new
+goto promote
+
+:settled2
+if exist gen1.exe del gen1.exe
+ren gen2.exe btpc.new
+
+:promote
 del BTCPC.EXE
 ren btpc.new BTCPC.EXE
 if not exist BTCPC.EXE goto failed
-echo BUILD OK - gen3.exe and BTCPC.EXE are the same bytes
+echo BUILD OK - the last two images built are the same bytes
+if exist gen1.exe del gen1.exe
+if exist gen2.exe del gen2.exe
 if exist gen3.exe del gen3.exe
 if exist fix.txt del fix.txt
 goto done
 
 :notfixed
-echo GEN3.EXE AND THE COMPILER BUILT FROM IT ARE NOT THE SAME BYTES
+echo THE LAST TWO IMAGES BUILT ARE NOT THE SAME BYTES, AND A BASE THAT MOVED
+echo DOES NOT EXPLAIN IT. FIX.TXT HOLDS WHAT DIFFERS.
 goto done
 
 :nosource

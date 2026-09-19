@@ -239,10 +239,13 @@ end;
   can be passed straight in, and the shape SetStr builds.
 
   The name goes to the host with no length, which means "read it until the
-  NUL", and the host is what turns it into the long-name call. That is the
-  whole of long name support here: it is not translated, it is never
-  translated, and it does not need to be - the only open this program ever
-  makes is 716Ch.
+  NUL", and the host is what turns it into a DOS call. It asks for the
+  long-name entry first and falls back to the old 8.3 entry when that one is
+  not there to answer - the carry comes back set and the name is handed to
+  3Dh or 3Ch instead. A long name therefore needs a DOS with long names, and
+  a short one works on any DOS, which is the whole of the support here. The
+  rest of the file calls take a handle and not a name, so none of them has a
+  long form to ask for.
 
   Errors are numbers in IOError and not exceptions, because the language has
   no exceptions: 0 is the last call went well, and the constants below say

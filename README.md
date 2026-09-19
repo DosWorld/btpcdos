@@ -6,8 +6,8 @@ extender and HDPMI32 present it. The compiler still compiles itself, and the
 same source compiled twice comes out byte-identical.
 
 Upstream emits Win32 PE images and reads its source from the input stream. Here
-the image is an HX-DOS executable, the source can be named on the command line,
-and the language has the few additions the port needed. This file is how to
+the image is an HX-DOS executable, the source is named on the command line and
+nowhere else, and the language has the few additions the port needed. This file is how to
 build it, how to run it, and what it costs to run: the compiler's tables are no
 longer part of its image, and how large they may be is a decision the source
 records.
@@ -29,7 +29,7 @@ DOSBox-X, so the whole of it is a batch file and the commands it runs.
 | `src/btpc.pas` | the compiler source being worked on |
 | `src/hxrtl.asm` | the HX-DOS runtime: the host primitives the compiler is built on, and the DOS and DPMI calls the library needs |
 | `src/hxstub.bin`, `src/hxrtl.bin`, `src/emptycode.bin` | the 512-byte DPMIST32 stub that is prepended to every image, the blob as assembled, and the empty code file `mkhx` is given |
-| `src/hxbase.bin` | the runtime blob in image form - 1024 bytes of headers and 12302 of blob - embedded in the compiler as the literal `HXBaseSize` counts |
+| `src/hxbase.bin` | the runtime blob in image form - 1024 bytes of headers and 12353 of blob - embedded in the compiler as the literal `HXBaseSize` counts |
 | `src/rtldos.pas` | the Pascal runtime library: DOS, strings, the command line, files, memory. The compiler reads it itself, before the program's first line |
 | `src/make.bat` | builds `src/BTCPC.EXE` from what is in `src` and `../tools` |
 | `tools/mkhx.pas`, `tools/mkbase.pas` | image assembly, and splicing the blob into the source |
@@ -78,42 +78,48 @@ behind on purpose and is not a program: the blob's entry falls through into the
 code that is not there, and the fault that follows takes the DOS session with
 it.
 
-**3. the chain.** The compiler is built twice and the two images are compared:
+**3. the chain.** The compiler is built from the seed, then from itself, and the
+two images are compared:
 
 ```
-..\boot\BTCPC.EXE < btpc.pas > gen3.exe
-gen3.exe < btpc.pas > btpc.new
-fc /b gen3.exe btpc.new
+..\boot\BTCPC.EXE -o gen1.exe btpc.pas
+gen1.exe -o gen2.exe btpc.pas
+fc /b gen1.exe gen2.exe
 ```
 
-Both compilations read the source from the input stream, so the image comes out
-on the output stream and the batch gives it its name. That is not a matter of
-style: a compiler names its image after its source, so a file argument would
-make `btpc.pas` come out as `btpc.EXE`, and a name spelled differently is a
-different file where the host's own filesystem decides what a name means. The
-first of the two is the one link whose diagnostics go to the same stream as the
-image, so what landed in `gen3.exe` is asked for the `MZ` header every image
-starts with before it is run, rather than run.
+Both compilations read the same file under the same name and differ in nothing
+but which compiler ran them, which is what makes the comparison mean what it
+says. `-o` is there because a compiler names its image after its source:
+without it `btpc.pas` would come out as `btpc.EXE` and the second generation
+would write over the first, and only the last image of the chain is kept.
 
 The two compile the same source with two compilers, so the images must be the
-same bytes, **121856** of them: that is the fixpoint, and a difference means
+same bytes, **120832** of them: that is the fixpoint, and a difference means
 the code generation depended on which compiler ran rather than on the source.
 The new compiler is moved over `src\BTCPC.EXE` only once they agree, so a build
 that fails leaves the compiler that was there. What the comparison said is
 written to `fix.txt`, which is deleted when it passed: a `fix.txt` in the tree
 is a build that stopped and a file that is there to be read.
 
-Every image carries the runtime blob the compiler that wrote it was built with,
-and the seed in `boot` was built with the blob from before the change, so for
-the length of one build after the runtime changes `gen3` and `btpc.new` differ
-by exactly that blob. The comparison that means something then is the compiler
-with what it writes itself - the same `fc` above, with the seed replaced by the
-compiler that has just been built:
+When those two differ, one more image is built from `gen2.exe` and compared
+with it, and **that** pair is the fixpoint. The case that needs it is a change
+to `hxrtl.asm`, and the reason is worth knowing:
 
-```
-BTCPC.EXE -o BTCPC2.EXE btpc.pas
-fc /b BTCPC.EXE BTCPC2.EXE
-```
+- **A compiler writes the base it carries, not the base in its source.** The
+  base is written by `EmitStubCode`, which is code in the compiler, so the
+  image a compiler writes carries the runtime blob that compiler was *built*
+  with. The literal between the markers in `btpc.pas` decides what a compiler
+  built from that source will carry - it does not reach the image any other
+  way.
+- So the first image a seed with an older blob produces carries that older
+  blob, and no source change can prevent it. It is a compiler in every other
+  way: it runs, and its `EmitStubCode` is the one the source has, so what *it*
+  writes carries the blob the source has. The generation after it is the one
+  that is both.
+- That is why the chain is run until two images agree rather than exactly
+  twice, and why the third image is built only when the first two differ.
+  Without a change to `hxrtl.asm` they do not, and the build is the two
+  compilations above.
 
 **`boot` is updated only after the whole verification, and it is updated as a
 set.** What goes in is the compiler that passed, `src\BTCPC.EXE`, and every
@@ -144,7 +150,7 @@ timeout 500 ./dosbox-x.exe -conf dosbox-x.conf -c "mount c C:\dos\c" -c "c:" -c 
 
 | Batch | What it does |
 |---|---|
-| `SRC\MAKE.BAT` | builds `SRC\BTCPC.EXE`: the blob, the tools, then the two-compiler chain and the comparison |
+| `SRC\MAKE.BAT` | builds `SRC\BTCPC.EXE`: the blob, the tools, then the chain of images and the comparison that ends it |
 | `BOOT\MAKE.BAT` | rebuilds the snapshot in `BOOT` from the sources in `BOOT`, and checks it against the compiler kept there |
 | `B1.BAT` | builds and runs `libtest`, then the three memory samples |
 | `B2.BAT` | builds and runs `hello`, `files`, `inline` and `intrtest` |
@@ -163,8 +169,9 @@ Rules that are not obvious and that a batch has to obey:
   copied in from the host. `if not exist BTCPC.PAS` therefore fails for a host
   file named `btpc.pas`, while `if exist case.exe` finds a `CASE.EXE` that DOS
   wrote. Spell a name that came from the host the way the host spells it, or
-  keep the build from having to test it - which is why the compiler is driven
-  through the redirect and the batch gives the images their names itself.
+  keep the build from having to test it - which is why every image in the chain
+  is named by the batch with `-o` rather than derived by the compiler from the
+  name of the source, and why the batches name their sources in lower case.
 - A failed compile does not stop the lines after it, so every output is deleted
   before the compile that writes it and every program is only run if its file
   exists. Otherwise error text would be executed as a program, or a stale image
@@ -172,8 +179,10 @@ Rules that are not obvious and that a batch has to obey:
   reading a result, read the `.lst` the compiler wrote - it says whether the
   compile happened at all.
 - Programs to be run are named in 8.3 form. This is the loader's rule, not the
-  compiler's: a compiled program opens its files through the long-name call, so
-  the *files* may have long names even though the *program* may not.
+  compiler's: a compiled program asks DOS for its files by their long names
+  first and falls back to the 8.3 entry when there is nothing there to answer
+  (see **Long file names**), so the *files* may have long names even though the
+  *program* may not.
 
 Two lines in the DOSBox-X log are normal for every HX client, these samples and
 the shipped Oberon ones alike: `ERROR EXEC:stack underflow` and
@@ -209,12 +218,18 @@ has to match. Two names, a `-o` with no name after it, or no source at all, are
 not a compilation - the compiler writes `Usage: BTCPC [-o image.exe] file.pas`
 and stops.
 
-Called with no argument at all it keeps the behaviour it had before it had a
-command line: the source is the input stream, the image is the output stream.
-That is the mode the bootstrap uses, and the only mode a compiler can be given
-when it is the thing being built. A compilation that fails writes its
-diagnostic and stops, so a half-written image is not something that can be left
-behind.
+**The source is a file and there is no other way in.** A compiler that read its
+source from the input stream would be waiting on that stream the moment the
+name it was given was not the file it wanted - a name that is not there, a
+directory it cannot search - and a build that waits looks exactly like a build
+that is slow. Nothing in a build can tell the two apart, which is reason enough
+for the compiler to have one input and for that input to be a file it opens
+itself, with a name that is in the command line it was called with.
+
+A compilation that fails writes its diagnostic and stops, so a half-written
+image is not something that can be left behind. `read`, `readln` and `eof` are
+still part of the language and still in the runtime; what the compiler does not
+have is a mode that reads a program from them.
 
 ## What the compiler costs
 
@@ -367,6 +382,46 @@ Three things about it are worth knowing before reading it:
 - **`SetStr` takes sixteen characters** and is for keys, not paths: a file name
   is built as a NUL-terminated array of cells, which is what `Reset` and
   `ReWrite` want.
+
+## Long file names
+
+A file is opened by name, and the name is handed to DOS by the runtime. There
+are two entries for that in DOS: the long-name one, `AH=716Ch`, and the original
+8.3 one, `AH=3Dh` for a file that is there and `AH=3Ch` for one that is to be
+created. The runtime asks for the long-name entry first and falls back to the
+8.3 entry when it does not answer.
+
+**There is no way to ask whether long names are there.** No call answers that,
+and no flag or version number can be trusted for it. What there is, is the carry
+flag: a DOS that has the long-name function clears the carry when it has done
+what was asked, and a DOS that has never heard of it leaves the flags exactly as
+it found them. So the runtime sets the carry before the call and reads it after
+it, and that is the whole of the test:
+
+- **carry clear** - the long-name call ran and succeeded. The handle is in `AX`;
+- **carry set** - the long-name call either failed or was never there, and the
+  two cases need the same answer. The registers are rewritten - the name into
+  `DS:DX`, where the 8.3 entry wants it rather than `DS:SI` where `716Ch` takes
+  it, the mode into `AX`, fresh attributes in `CX` - and the 8.3 entry is called.
+  Rewriting them is not tidiness: the rejected call leaves the fields it did not
+  read holding whatever the caller put there, and the entry that is called
+  second reads more of them than the first did.
+
+Which entry answered is not recorded anywhere, because nothing needs to know.
+What the fallback buys is that a DOS without long names is a DOS where 8.3 names
+still work, instead of the DOS where nothing opens at all. What it does not buy
+is a long name on such a DOS: a name longer than eight plus three is a name only
+the long-name entry can reach, so **a program that has to run under both writes
+8.3 names**, and one that writes a long name runs where long names do.
+`examples/files.pas` opens a name of seventeen characters, so it is a sample
+for a DOS with long names - which the DOSBox-X configuration here is
+(`lfn = true`).
+
+Opening is the only one of the file calls with a name in it. Reading, writing,
+seeking and closing take a handle the open answered with - `AH=3Fh`, `40h`,
+`42h` and `3Eh` - and those are the same call on every DOS there is, long names
+or none. The library has no delete, rename, mkdir or find-first, so there is no
+other name to hand over.
 
 ## The samples
 

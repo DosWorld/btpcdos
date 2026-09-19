@@ -463,10 +463,23 @@ RTLEOLN:
 ; writes the code it would write in Turbo Pascal - a name in an array[1..n] of
 ; char and a count of chars - and never sees the difference.
 ;
-; Open is AH=716Ch, the long-name entry, and never AH=3Dh: this environment
-; does not translate the old 8.3 entry, so a long name would either fail or be
-; opened under a mangled short one. The Oberon port measured this (see
-; lib/HXDOS/DOS.ob07), and requirement 8 wants long names to work.
+; Open asks for the long-name entry, AH=716Ch, first, and falls back to the old
+; 8.3 entry - AH=3Dh for a file that is there, AH=3Ch for one that is to be
+; created - when the long-name call comes back with the carry set. The carry is
+; set before that call and read after it, and that is not decoration: it is the
+; only way to tell the two answers apart. A DOS that has no long-name functions
+; leaves the carry as it found it, and a handler that does not touch the flags
+; at all is the case the fallback exists for. There is no way to ask whether
+; long names are there - the carry after the call is the answer.
+;
+; Which entry answered is not recorded, because it does not have to be: what
+; this buys is that a DOS without long names is a DOS where 8.3 names still
+; work, instead of the DOS where nothing opens at all that an open with no
+; fallback makes of it. A long name needs a DOS with long names; a program that
+; has to run under both writes 8.3 names.
+;
+; The other file calls take a handle and not a name, so none of them is
+; affected: read, write, seek and close are 3Fh, 40h, 42h and 3Eh on every DOS.
 ;
 ; AH=3Fh and AH=40h take a 16-bit count in CX, so one call moves at most
 ; 0FF00h bytes; a caller that wants more calls again. The count is clamped here
@@ -538,20 +551,52 @@ RTLFileOpenZNameLoop:
  JMP RTLFileOpenZNameLoop
 RTLFileOpenTerminate:
  MOV BYTE PTR [EDI],0
- AND EDX,3
+ AND EDX,3                          ; the mode, which indexes all three tables
+ MOV EDI,EDX                        ; kept: the short entry below needs it too
  MOV EBX,ESI
  SUB EBX,RTLFunctionTable-RTLFileAccessTable
  MOV EBX,DWORD PTR [EBX+EDX*4]      ; the access mode
  MOV ECX,ESI
  SUB ECX,RTLFunctionTable-RTLFileActionTable
  MOV ECX,DWORD PTR [ECX+EDX*4]      ; what to do with the file
- MOV EDX,ECX
+ MOV EDX,ECX                        ; DX = the action
  MOV ECX,0                          ; attributes
+ PUSH ESI                           ; the table base, the mode and the name,
+ PUSH EDI                           ; which DOS is free to clobber across the
+ PUSH EBP                           ; call and the fallback needs all three
  MOV EDI,0                          ; no alias hint
- MOV ESI,EBP
+ MOV ESI,EBP                        ; DS:SI is where 716Ch takes the name
  MOV EAX,716CH
+ STC                                ; and the carry is set first, so that it
+                                    ; says something after the call: the
+                                    ; long-name entry answered if and only if
+                                    ; it came back clear. A handler that does
+                                    ; not know the function leaves it set, and
+                                    ; so does one that knows it and refused the
+                                    ; file - a name that is not there is the
+                                    ; case that reaches this every time a
+                                    ; program is compiled from another
+                                    ; directory and the library is not in the
+                                    ; one the program is in
+ INT 21H
+ POP EBP                            ; the name, which the short entry below
+                                    ; wants in DX rather than SI
+ POP EDI                            ; the mode, which indexes both tables
+ POP ESI                            ; the table base, which indexes them
+ JNC RTLFileOpenGot
+ MOV EDX,EBP                        ; DS:DX, which is where the short entry
+                                    ; takes the name
+ MOV EBX,ESI
+ SUB EBX,RTLFunctionTable-RTLFileFallbackTable
+ MOV EAX,DWORD PTR [EBX+EDI*4]      ; 3D00h/3D02h, or 3C00h to create
+ MOV ECX,0                          ; the attributes 3Ch reads. AX and DS:DX
+                                    ; are the rest of what the two entries
+                                    ; look at, and neither is stale from the
+                                    ; rejected 716Ch call: both were written
+                                    ; here, after it
  INT 21H
  JC RTLFileOpenFailed
+RTLFileOpenGot:
  AND EAX,0FFFFH                     ; the handle arrives in the low half
  JMP RTLFileOpenDone
 RTLFileOpenFailed:
@@ -1472,6 +1517,18 @@ RTLFileActionTable:
  DD 12H                             ; 1 create or truncate
  DD 1                               ; 2 open an existing file
  DD 12H                             ; 3 create or truncate
+
+; And the same mode turned into the old 8.3 entry, AH=3Dh or AH=3Ch in the high
+; half of the word. 3Dh takes its access in the low half of AL - 0 read, 2 read
+; and write - and 3Ch has no access of its own: it always makes the file and
+; always opens it for reading and writing, which is why the two modes that
+; create share an entry.
+RTLFileFallbackTable:
+ DD 3D00H                           ; 0 open an existing file for reading
+ DD 3C00H                           ; 1 create or truncate
+ DD 3D02H                           ; 2 open an existing file for reading and
+                                    ;   writing
+ DD 3C00H                           ; 3 create or truncate
 RTLInBuffer:      TIMES 4096 DB 0
 RTLInPos:         DD 0
 RTLInCount:       DD 0
