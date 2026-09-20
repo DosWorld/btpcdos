@@ -1,12 +1,12 @@
-# BeRoTinyPascal for HX-DOS
+# BeRoTinyPascal for DOS
 
 BeRoTinyPascal is Benjamin Rosseaux's small self-hosting Pascal compiler. This
-directory is a port of it to **HX-DOS**: 32-bit protected mode DOS, as the HX
+directory is a port of it to **DOS/DPMI32**: 32-bit protected mode DOS, as the HX-DOS
 extender and HDPMI32 present it. The compiler still compiles itself, and the
 same source compiled twice comes out byte-identical.
 
 Upstream emits Win32 PE images and reads its source from the input stream. Here
-the image is an HX-DOS executable, the source is named on the command line and
+the image is an PE-DOS executable, the source is named on the command line and
 nowhere else, and the language has the few additions the port needed. This file is how to
 build it, how to run it, and what it costs to run: the compiler's tables are no
 longer part of its image, and how large they may be is a decision the source
@@ -50,10 +50,10 @@ rebuild itself and be fallen back to without the rest of the tree.
 `src/make.bat` builds the compiler, and it is run with `src` as the current
 directory. Every path in it is relative and it uses nothing that DOS and the
 Windows command prompt do not both have, so the same file serves both shells.
-The programs it starts are HX-DOS images, though, and those run under DOS -
+The programs it starts are PE-DOS images, though, and those run under DOS -
 under Windows the first one crashes - so DOS is where the build is done. There
 is no compiler on the Windows side to start it with: the port's compiler is an
-HX-DOS program.
+PE-DOS program.
 
 What the batch does, in the order it has to be done:
 
@@ -316,7 +316,7 @@ Beyond upstream BeRoTinyPascal:
 
 There are no DLLs (item 9 of the requirements, and no support is planned), no
 units, no `string` type, no sets, no floating point, and no output target other
-than HX-DOS.
+than PE-DOS.
 
 ## Writing an `inline` block
 
